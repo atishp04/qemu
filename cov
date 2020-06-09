@@ -1,0 +1,23 @@
+This series adds support OpenSBI dynamic firmware support to Qemu.
+Qemu loader passes the information about the DT and next stage (i.e. kernel
+or U-boot) via "a2" register. It allows the user to build bigger OS images
+without worrying about overwriting DT. It also unifies the reset vector code
+in rom and dt placement. Now, the DT is copied directly in DRAM instead of ROM.
+
+The changes have been verified on following qemu machines.
+
+64bit:
+ - spike, sifive_u, virt
+32bit:
+ - virt
+
+I have also verified fw_jump on all the above platforms to ensure that this
+series doesn't break the existing setup.
+
+Changes from v1->v2:
+1. Rebased on top of latest upstream Qemu (with MSEL changes for sifive_u).
+2. Improved the code organization
+
+To: qemu-devel@nongnu.org 
+option-subject Add OpenSBI dynamic firmware support
+option-prefix PATCH v2

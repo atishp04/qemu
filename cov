@@ -1,0 +1,8 @@
+This series adds support OpenSBI dynamic firmware support to Qemu.
+I have verified the changes with spike, sifive_u & virt machines for 64/32 bit.
+I have also verified fw_jump to ensure that this series doesn't break the
+existing setup.
+
+To: qemu-devel@nongnu.org 
+option-subject Add OpenSBI dynamic firmware support
+option-prefix RFC WD-INTERNAL

@@ -31,6 +31,7 @@
  */
 
 #include "qemu/osdep.h"
+#include "qemu/units.h"
 #include "qemu/log.h"
 #include "qemu/error-report.h"
 #include "qapi/error.h"
@@ -325,6 +326,7 @@ static void sifive_u_machine_init(MachineState *machine)
     MemoryRegion *main_mem = g_new(MemoryRegion, 1);
     MemoryRegion *flash0 = g_new(MemoryRegion, 1);
     target_ulong start_addr = memmap[SIFIVE_U_DRAM].base;
+    hwaddr fdt_load_addr;
 
     /* Initialize SoC */
     object_initialize_child(OBJECT(machine), "soc", &s->soc,
@@ -366,8 +368,18 @@ static void sifive_u_machine_init(MachineState *machine)
                                   "linux,initrd-start", start);
             qemu_fdt_setprop_cell(s->fdt, "/chosen", "linux,initrd-end",
                                   end);
+            fdt_load_addr = QEMU_ALIGN_UP(end, 2 * MiB);
         }
     }
+
+    /* Compute the fdt load address in dram */
+    fdt_load_addr = riscv_calc_fdt_load_addr(memmap[SIFIVE_U_DRAM].base,
+                                             machine->ram_size, s->fdt);
+
+    if (fdt_load_addr >= (memmap[SIFIVE_U_DRAM].base + machine->ram_size)) {
+        error_report("Not enough space for FDT after kernel + initrd");
+        exit(1);
+     }
 
     if (s->start_in_flash) {
         start_addr = memmap[SIFIVE_U_FLASH0].base;
@@ -375,7 +387,8 @@ static void sifive_u_machine_init(MachineState *machine)
 
     /* load the reset vector */
     riscv_setup_rom_reset_vec(start_addr, memmap[SIFIVE_U_MROM].base,
-                              memmap[SIFIVE_U_MROM].size, s->fdt);
+                              memmap[SIFIVE_U_MROM].size,
+                              fdt_load_addr, s->fdt);
 }
 
 static bool sifive_u_machine_get_start_in_flash(Object *obj, Error **errp)

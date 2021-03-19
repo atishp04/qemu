@@ -1,0 +1,48 @@
+The latest version of the SBI specification includes a Performance Monitoring
+Unit(PMU) extension[1] which allows the supervisor to start/stop/configure
+various PMU events. This series implements basic infrastructure to support
+PMU in virt machine. Qemu can support only cycle and instruction counters.
+Thus, this series adds only those two events. However, it enables all
+the counters and adds all the necessary checks required before accessing
+a counter. This will allow us to add any other PMU events in future.
+
+First patch in this series is just a cleanup while PATCH 2-5 adds support
+for all the PMU CSR. PATCH 6 adds a DT node as per DT bindings defined in
+OpenSBI[2]. PATCH 7 is just a debug patch and is not supposed to be merged.
+
+Here is an output of perf stat while running hackbench with OpenSBI & Linux
+kernel patches applied [3].
+
+[root@fedora-riscv riscv]# perf stat -e r8000000000000007 -e r8000000000000006 \
+-e r0000000000000002 -e r0000000000000004 -e branch-misses -e cache-misses \
+-e cycles -e instructions ./hackbench -pipe 15 process 15
+
+Running with 15*40 (== 600) tasks.
+Time: 1.548
+
+ Performance counter stats for './hackbench -pipe 15 process 15':
+
+             7,103      r8000000000000007     (62.56%) --> SBI_PMU_FW_IPI_RECVD
+             7,767      r8000000000000006     (12.19%) --> SBI_PMU_FW_IPI_SENT
+                 0      r0000000000000002     (24.79%) --> a custom raw event described in DT
+     <not counted>      r0000000000000004     (0.00%)  --> non-supported raw event described in DT
+                 0      branch-misses         (12.65%) 
+                 0      cache-misses          (25.36%)
+    27,978,868,702      cycles                (38.12%)
+    27,849,527,556      instructions          # 1.00  insn per cycle  (50.46%)
+
+       2.431195184 seconds time elapsed
+
+       1.553153000 seconds user
+      13.615924000 seconds sys
+
+The patches can also be found in the github[4].
+
+[1] https://lists.riscv.org/g/tech-unixplatformspec/message/598
+[2] https://github.com/atishp04/opensbi/tree/riscv_pmu_v1 
+[3] https://github.com/atishp04/linux/tree/riscv_pmu_v1 
+[4] https://github.com/atishp04/qemu/tree/riscv_pmu_v1 
+
+
+option-subject Improve PMU support
+option-prefix  RFC

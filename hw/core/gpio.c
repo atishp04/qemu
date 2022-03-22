@@ -63,6 +63,7 @@ void qdev_init_gpio_in_named_with_opaque(DeviceState *dev,
         g_free(propname);
     }
 
+    fprintf(stdout, "%s: num_in %d n %d\n", __func__, gpio_list->num_in, n);
     gpio_list->num_in += n;
 }
 
@@ -105,6 +106,7 @@ qemu_irq qdev_get_gpio_in_named(DeviceState *dev, const char *name, int n)
 {
     NamedGPIOList *gpio_list = qdev_get_named_gpio_list(dev, name);
 
+    fprintf(stdout, "n %d gpio_list->num_in %d name %ps\n", n, gpio_list->num_in, __builtin_return_address(0));
     assert(n >= 0 && n < gpio_list->num_in);
     return gpio_list->in[n];
 }

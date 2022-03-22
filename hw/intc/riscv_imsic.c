@@ -432,6 +432,7 @@ DeviceState *riscv_imsic_create(hwaddr addr, uint32_t hartid, bool mmode,
     sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
     sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, addr);
 
+    fprintf(stdout, "%s: In\n", __func__);
     for (i = 0; i < num_pages; i++) {
         if (!i) {
             qdev_connect_gpio_out_named(dev, NULL, i,

@@ -823,6 +823,7 @@ static void riscv_aplic_realize(DeviceState *dev, Error **errp)
      * have IRQ lines delegated by their parent APLIC.
      */
     if (!aplic->parent) {
+	fprintf(stdout, "%s: num_irqs %d\n", __func__, aplic->num_irqs);
         qdev_init_gpio_in(dev, riscv_aplic_request, aplic->num_irqs);
     }
 
@@ -965,6 +966,7 @@ DeviceState *riscv_aplic_create(hwaddr addr, hwaddr size,
     }
 
     if (!msimode) {
+        fprintf(stdout, "%s: In\n", __func__);
         for (i = 0; i < num_harts; i++) {
             CPUState *cpu = qemu_get_cpu(hartid_base + i);
 

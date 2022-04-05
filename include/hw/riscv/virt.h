@@ -38,6 +38,7 @@ typedef enum RISCVVirtAIAType {
     VIRT_AIA_TYPE_NONE = 0,
     VIRT_AIA_TYPE_APLIC,
     VIRT_AIA_TYPE_APLIC_IMSIC,
+    VIRT_AIA_TYPE_IMSIC,
 } RISCVVirtAIAType;
 
 struct RISCVVirtState {

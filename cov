@@ -1,0 +1,24 @@
+This patch series adds the support for RISC-V ISA extension smcntrpmf (cycle and
+privilege mode filtering) [1]. It is based on Kevin's earlier work but improves
+it by actually implement privilege mode filtering by tracking the privilege
+mode switches. This enables the privilege mode filtering for mhpmcounters as
+well. However, Smcntrpmf/Sscofpmf must be enabled to leverage this. This series
+also modified to report the raw instruction count instead of virtual cpu time
+based on the instruction count when icount is enabled. The former seems to be
+the preferred approach for instruction count for other architectures as well.
+
+Please let me know if anybody thinks that's incorrect.
+
+The series is also available at
+
+
+Changes from v1->v2:
+1. Implemented actual mode filtering for both icount and host ticks mode.
+1. Addressed comments in v1.
+2. Added Kevin's personal email address.
+
+[1] https://github.com/riscv/riscv-smcntrpmf
+[2] https://github.com/atishp04/qemu/tree/smcntrpmf_v1
+
+option-subject Add ISA extension smcntrpmf support 
+option-prefix v2

@@ -495,6 +495,7 @@ static void build_dsdt(GArray *table_data,
                                      AML_SYSTEM_MEMORY,
                                      memmap[VIRT_PCDIMM_ACPI].base);
         }
+        acpi_dsdt_add_power_button(scope);
     }
 
     aml_append(dsdt, scope);

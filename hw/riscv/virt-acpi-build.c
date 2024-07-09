@@ -143,11 +143,59 @@ static void acpi_dsdt_add_cpus(Aml *scope, RISCVVirtState *s)
     }
 }
 
-static void acpi_dsdt_add_plic_aplic(Aml *scope, RISCVVirtState *s)
+static void build_smcc_ged_aml(Aml *table, int gsi_base, hwaddr smc_ged_addr)
+{
+    Aml *dev;
+
+    dev = aml_device("SMC%.01X", 0);
+    aml_append(dev, aml_name_decl("_HID", aml_string("RSCV0005")));
+    aml_append(dev, aml_name_decl("_UID", aml_int(0)));
+    aml_append(dev, aml_name_decl("_GSB", aml_int(gsi_base)));
+
+     /* _CRS Method to describe the memory regions */
+    Aml *crs = aml_resource_template();
+
+    /* Base address for CFG0 */
+    aml_append(crs, aml_memory32_fixed( smc_ged_addr, ACPI_GED_MSI_CTRL_LEN, AML_READ_WRITE));
+    /* Base address for CFG1 */
+    aml_append(crs, aml_memory32_fixed(smc_ged_addr + ACPI_GED_MSI_CTRL_LEN,
+                                        ACPI_GED_MSI_CTRL_LEN, AML_READ_WRITE));
+
+    aml_append(dev, aml_name_decl("_CRS", crs));
+    Aml *top_pkg = aml_package(2);
+
+    Aml *gs0_pkg = aml_package(6);
+    /* AML resource index 0 */
+    aml_append(gs0_pkg, aml_int(0));
+    /* GSI number */
+    aml_append(gs0_pkg, aml_int(gsi_base + SMMC_TEST_MSI));
+    aml_append(gs0_pkg, aml_int(ACPI_GED_MSI_CTRL_ADDR_LOW));
+    aml_append(gs0_pkg, aml_int(ACPI_GED_MSI_CTRL_ADDR_HIGH));
+    aml_append(gs0_pkg, aml_int(ACPI_GED_MSI_CTRL_DATA));
+    aml_append(gs0_pkg, aml_int(ACPI_GED_MSI_CTRL_ENABLE));
+
+    Aml *gs1_pkg = aml_package(6);
+    /* AML resource index 1 */
+    aml_append(gs1_pkg, aml_int(1));
+    aml_append(gs1_pkg, aml_int(gsi_base + GED_SMMC_MSI));
+    aml_append(gs1_pkg, aml_int(ACPI_GED_MSI_CTRL_ADDR_LOW));
+    aml_append(gs1_pkg, aml_int(ACPI_GED_MSI_CTRL_ADDR_HIGH));
+    aml_append(gs1_pkg, aml_int(ACPI_GED_MSI_CTRL_DATA));
+    aml_append(gs1_pkg, aml_int(ACPI_GED_MSI_CTRL_ENABLE));
+
+    aml_append(top_pkg, gs0_pkg);
+    aml_append(top_pkg, gs1_pkg);
+    aml_append(dev, aml_name_decl("CFGN",top_pkg));
+
+    aml_append(table, dev);
+
+}
+
+static void acpi_dsdt_add_plic_aplic_smmc(Aml *scope, RISCVVirtState *s)
 {
     MachineState *ms = MACHINE(s);
     uint64_t plic_aplic_addr;
-    uint32_t gsi_base;
+    uint32_t gsi_base = 0;
     uint8_t  socket;
 
     if (s->aia_type == VIRT_AIA_TYPE_NONE) {
@@ -185,6 +233,12 @@ static void acpi_dsdt_add_plic_aplic(Aml *scope, RISCVVirtState *s)
                                                AML_READ_WRITE));
             aml_append(dev, aml_name_decl("_CRS", crs));
             aml_append(scope, dev);
+        }
+        /* SMMC DSDT node */
+        if ((s->aia_type == VIRT_AIA_TYPE_APLIC_IMSIC) & s->acpi_ged_msimode) {
+            gsi_base = gsi_base + VIRT_IRQCHIP_NUM_SOURCES + 1;
+            s->smmc_gsi_base = gsi_base;
+            build_smcc_ged_aml(scope, gsi_base, s->memmap[VIRT_ACPI_SMMC].base);
         }
     }
 }
@@ -442,6 +496,7 @@ static void build_dsdt(GArray *table_data,
     AcpiTable table = { .sig = "DSDT", .rev = 2, .oem_id = s->oem_id,
                         .oem_table_id = s->oem_table_id };
 
+    int ged_gsi = GED_IRQ;
 
     acpi_table_begin(&table, table_data);
     dsdt = init_aml_allocator();
@@ -459,7 +514,7 @@ static void build_dsdt(GArray *table_data,
 
     socket_count = riscv_socket_count(ms);
 
-    acpi_dsdt_add_plic_aplic(scope, s);
+    acpi_dsdt_add_plic_aplic_smmc(scope, s);
     acpi_dsdt_add_uart(scope, &memmap[VIRT_UART0], UART0_IRQ);
 
     if (socket_count == 1) {
@@ -487,8 +542,11 @@ static void build_dsdt(GArray *table_data,
         uint32_t event = object_property_get_uint(OBJECT(s->acpi_dev),
                                                   "ged-event", &error_abort);
 
+        if (s->acpi_ged_msimode) {
+            ged_gsi = s->smmc_gsi_base + GED_SMMC_MSI;
+        }
         build_ged_aml(scope, "\\_SB."GED_DEVICE, HOTPLUG_HANDLER(s->acpi_dev),
-                      GED_IRQ, AML_SYSTEM_MEMORY, memmap[VIRT_ACPI_GED].base);
+                      ged_gsi, AML_SYSTEM_MEMORY, memmap[VIRT_ACPI_GED].base);
 
         if (event & ACPI_GED_MEM_HOTPLUG_EVT) {
             build_memory_hotplug_aml(scope, ms->ram_slots, "\\_SB", NULL,

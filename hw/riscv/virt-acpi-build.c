@@ -526,7 +526,7 @@ static void build_madt(GArray *table_data,
     uint16_t imsic_max_hart_per_socket = 0;
     uint8_t  hart_index_bits;
     uint64_t aplic_addr;
-    uint32_t gsi_base;
+    uint32_t gsi_base = 0;
     uint8_t  socket;
 
     for (socket = 0; socket < riscv_socket_count(ms); socket++) {
@@ -601,6 +601,26 @@ static void build_madt(GArray *table_data,
             /* APLIC size */
             build_append_int_noprefix(table_data,
                                       s->memmap[VIRT_APLIC_S].size, 4);
+        }
+        /*
+         * SMMC : A system can have both APLIC and SMMC but IMSIC is mandatory
+         * for platforms with SMMC. The GSI range for SMMC start after all APLIC
+         * GSIs.
+         */
+        if ((s->aia_type == VIRT_AIA_TYPE_APLIC_IMSIC) && s->acpi_ged_msimode) {
+            gsi_base = gsi_base + VIRT_IRQCHIP_NUM_SOURCES + 1;
+            /* SMMC GSI base was initialized while generating DSDT Table. Make sure the base is same */
+            assert(s->smmc_gsi_base == gsi_base);
+            build_append_int_noprefix(table_data, 0x1C, 1); /* Type */
+            build_append_int_noprefix(table_data, 20, 1);   /* Length */
+            build_append_int_noprefix(table_data, 1, 1);    /* Version */
+            build_append_int_noprefix(table_data, 0, 1);    /* SMMC UID */
+            build_append_int_noprefix(table_data, 0, 4);    /* Flags */
+            build_append_int_noprefix(table_data, 0, 8);    /* ID */
+            /* Global System Interrupt Base */
+            build_append_int_noprefix(table_data, gsi_base, 4);
+            /* Total External Interrupt Sources Supported */
+            build_append_int_noprefix(table_data, 4, 1);
         }
     } else {
         /* PLICs */

@@ -143,11 +143,192 @@ static void acpi_dsdt_add_cpus(Aml *scope, RISCVVirtState *s)
     }
 }
 
-static void acpi_dsdt_add_plic_aplic(Aml *scope, RISCVVirtState *s)
+static void build_smcc_ged_aml(Aml *table, int gsi_base, hwaddr smc_ged_addr)
+{
+    Aml *dev;
+
+    dev = aml_device("SMC%.01X", 0);
+    aml_append(dev, aml_name_decl("_HID", aml_string("RSCV0005")));
+    aml_append(dev, aml_name_decl("_UID", aml_int(0)));
+    aml_append(dev, aml_name_decl("_GSB", aml_int(gsi_base)));
+
+    #ifndef RISCV_SMMC_DSM_APPROCH
+
+     /* _CRS Method to describe the memory regions */
+    Aml *crs = aml_resource_template();
+
+    /* Base address for CFG0 */
+    aml_append(crs, aml_memory32_fixed( smc_ged_addr, ACPI_GED_MSI_CTRL_LEN, AML_READ_WRITE));
+    /* Base address for CFG1 */
+    aml_append(crs, aml_memory32_fixed(smc_ged_addr + ACPI_GED_MSI_CTRL_LEN,
+                                        ACPI_GED_MSI_CTRL_LEN, AML_READ_WRITE));
+
+    aml_append(dev, aml_name_decl("_CRS", crs));
+    Aml *top_pkg = aml_package(2);
+
+    Aml *gs0_pkg = aml_package(6);
+    /* AML resource index 0 */
+    aml_append(gs0_pkg, aml_int(0));
+    /* GSI number */
+    aml_append(gs0_pkg, aml_int(gsi_base + SMMC_TEST_MSI));
+    aml_append(gs0_pkg, aml_int(ACPI_GED_MSI_CTRL_ADDR_LOW));
+    aml_append(gs0_pkg, aml_int(ACPI_GED_MSI_CTRL_ADDR_HIGH));
+    aml_append(gs0_pkg, aml_int(ACPI_GED_MSI_CTRL_DATA));
+    aml_append(gs0_pkg, aml_int(ACPI_GED_MSI_CTRL_ENABLE));
+
+    Aml *gs1_pkg = aml_package(6);
+    /* AML resource index 1 */
+    aml_append(gs1_pkg, aml_int(1));
+    aml_append(gs1_pkg, aml_int(gsi_base + GED_SMMC_MSI));
+    aml_append(gs1_pkg, aml_int(ACPI_GED_MSI_CTRL_ADDR_LOW));
+    aml_append(gs1_pkg, aml_int(ACPI_GED_MSI_CTRL_ADDR_HIGH));
+    aml_append(gs1_pkg, aml_int(ACPI_GED_MSI_CTRL_DATA));
+    aml_append(gs1_pkg, aml_int(ACPI_GED_MSI_CTRL_ENABLE));
+
+    aml_append(top_pkg, gs0_pkg);
+    aml_append(top_pkg, gs1_pkg);
+    aml_append(dev, aml_name_decl("CFGN",top_pkg));
+    #else
+
+    /* OperationRegion to describe the memory region */
+    aml_append(dev, aml_operation_region("CFG0", AML_SYSTEM_MEMORY, aml_int(smc_ged_addr),
+               ACPI_GED_MSI_CTRL_LEN));
+    Aml *field = aml_field("CFG0", AML_DWORD_ACC, AML_NOLOCK, AML_PRESERVE); //TODO: Verify the rule
+    aml_append(field, aml_named_field("ALO0", 4 * BITS_PER_BYTE));
+    aml_append(field, aml_named_field("AHI0", 4 * BITS_PER_BYTE));
+    aml_append(field, aml_named_field("DAT0", 4 * BITS_PER_BYTE));
+    aml_append(field, aml_named_field("ENB0", 4 * BITS_PER_BYTE));
+    aml_append(dev, field);
+
+    aml_append(dev, aml_operation_region("CFG1", AML_SYSTEM_MEMORY, aml_int(smc_ged_addr + ACPI_GED_MSI_CTRL_LEN),
+               ACPI_GED_MSI_CTRL_LEN));
+    field = aml_field("CFG1", AML_DWORD_ACC, AML_NOLOCK, AML_PRESERVE); //TODO: Verify the rule
+    aml_append(field, aml_named_field("ALO1", 4 * BITS_PER_BYTE));
+    aml_append(field, aml_named_field("AHI1", 4 * BITS_PER_BYTE));
+    aml_append(field, aml_named_field("DAT1", 4 * BITS_PER_BYTE));
+    aml_append(field, aml_named_field("ENB1", 4 * BITS_PER_BYTE));
+    aml_append(dev, field);
+
+    /* Method _DSM */
+    Aml *method = aml_method("_DSM", 4, AML_SERIALIZED);
+    {
+        Aml *function, *uuid, *args, *uuid_if_ctx, *if_ctx, *if_ctx2, *if_ctx3, *else_ctx2, *else_ctx3;
+        Aml *gsi_num = aml_local(2);
+
+        Aml *func_arg1 = aml_local(3);
+        uuid = aml_arg(0);
+        function = aml_arg(2);
+        args = aml_arg(3);
+        uuid_if_ctx = aml_if(aml_equal(
+            uuid, aml_touuid("F0EAA91D-3F8E-4D2B-8C74-D4BA7792F3A4"))); //TODO: Generate an unqiue guid
+        {
+            aml_append(uuid_if_ctx, aml_store(aml_derefof(aml_index(args, aml_int(0))), gsi_num));
+            /*
+             * Enable MSI
+             * Arg 2 (Integer): Function Index = 0
+             * Arg 3 (Package): Arguments = Package: Type: Integer
+             *                  Integer 1: GSI number
+             *                  Integer 2: Enable/Disable Operation
+	         *			                    0 - Disable
+	         *			                    1 - Enable
+             * Returns: Type: Integer
+             *          0: Success
+             *          1: Not Implemented
+             *          2: General Failure
+             */
+            if_ctx = aml_if(aml_equal(function, aml_int(0)));
+            {
+                aml_append(if_ctx, aml_store(aml_derefof(aml_index(args, aml_int(1))), func_arg1));
+                /* Enable MSI */
+                if_ctx2 = aml_if(aml_equal(func_arg1, aml_int(1)));
+                {
+                    if_ctx3 = aml_if(aml_equal(gsi_num, aml_int(0)));
+                    {
+                        aml_append(if_ctx3, aml_store(aml_int(1), aml_name("ENB0")));
+                        aml_append(if_ctx3, aml_return(aml_int(0)));
+
+                    }
+                    aml_append(if_ctx2, if_ctx3);
+                    else_ctx3 = aml_if(aml_equal(gsi_num, aml_int(1)));
+                    {
+                        aml_append(else_ctx3, aml_store(aml_int(1), aml_name("ENB1")));
+                        aml_append(else_ctx3, aml_return(aml_int(0)));
+
+                    }
+                    aml_append(if_ctx2, else_ctx3);
+                }
+                aml_append(if_ctx, if_ctx2);
+                /* Disable MSI */
+                else_ctx2 = aml_if(aml_equal(func_arg1, aml_int(0)));
+                {
+                    if_ctx3 = aml_if(aml_equal(gsi_num, aml_int(0)));
+                    {
+                        aml_append(if_ctx3, aml_store(aml_int(0), aml_name("ENB0")));
+                        aml_append(if_ctx3, aml_return(aml_int(0)));
+
+                    }
+                    aml_append(else_ctx2, if_ctx3);
+                    else_ctx3 = aml_if(aml_equal(gsi_num, aml_int(1)));
+                    {
+                        aml_append(else_ctx3, aml_store(aml_int(0), aml_name("ENB1")));
+                        aml_append(else_ctx3, aml_return(aml_int(0)));
+
+                    }
+                    aml_append(else_ctx2, else_ctx3);
+                }
+                aml_append(if_ctx, else_ctx2);
+                /* TODO: Support Not Implemented/General Failure */
+            }
+            aml_append(uuid_if_ctx, if_ctx);
+
+            /*
+             * Set MSI Configuration
+             * Arg 2 (Integer): Function Index = 1
+             * Arg 3 (Package): Arguments = Package: Type: Integer
+             *                  Integer 1: GSI number
+             *                  Integer 2: MSI_ADDR_LOW
+	         *                  Integer 3: MSI_ADDR_HIGH
+             * 	                Integer 4: MSI_ADDR_DATA
+             * Returns: Type: Integer
+             *          0: Success
+             *          1: Not Implemented
+             *          2: General Failure
+             */
+            if_ctx = aml_if(aml_equal(function, aml_int(1)));
+            {
+                /*TODO: Validate number of arguments ?*/
+                if_ctx2 = aml_if(aml_equal(gsi_num, aml_int(0))); {
+                    aml_append(if_ctx2, aml_store(aml_derefof(aml_index(args, aml_int(1))), aml_name("ALO0")));
+                    aml_append(if_ctx2, aml_store(aml_derefof(aml_index(args, aml_int(2))), aml_name("AHI0")));
+                    aml_append(if_ctx2, aml_store(aml_derefof(aml_index(args, aml_int(3))), aml_name("DAT0")));
+                    aml_append(if_ctx2, aml_return(aml_int(0)));
+                }
+                aml_append(if_ctx, if_ctx2);
+                else_ctx2 = aml_if(aml_equal(gsi_num, aml_int(1))); {
+                    aml_append(else_ctx2, aml_store(aml_derefof(aml_index(args, aml_int(1))), aml_name("ALO1")));
+                    aml_append(else_ctx2, aml_store(aml_derefof(aml_index(args, aml_int(2))), aml_name("AHI1")));
+                    aml_append(else_ctx2, aml_store(aml_derefof(aml_index(args, aml_int(3))), aml_name("DAT1")));
+                    aml_append(else_ctx2, aml_return(aml_int(0)));
+                }
+                aml_append(if_ctx, else_ctx2);
+            }
+            aml_append(uuid_if_ctx, if_ctx);
+
+        }
+        aml_append(method, uuid_if_ctx);
+    }
+    aml_append(dev, method);
+    #endif
+
+    aml_append(table, dev);
+
+}
+
+static void acpi_dsdt_add_plic_aplic_smmc(Aml *scope, RISCVVirtState *s)
 {
     MachineState *ms = MACHINE(s);
     uint64_t plic_aplic_addr;
-    uint32_t gsi_base;
+    uint32_t gsi_base = 0;
     uint8_t  socket;
 
     if (s->aia_type == VIRT_AIA_TYPE_NONE) {
@@ -185,6 +366,12 @@ static void acpi_dsdt_add_plic_aplic(Aml *scope, RISCVVirtState *s)
                                                AML_READ_WRITE));
             aml_append(dev, aml_name_decl("_CRS", crs));
             aml_append(scope, dev);
+        }
+        /* SMMC DSDT node */
+        if ((s->aia_type == VIRT_AIA_TYPE_APLIC_IMSIC) & s->acpi_ged_msimode) {
+            gsi_base = gsi_base + VIRT_IRQCHIP_NUM_SOURCES + 1;
+            s->smmc_gsi_base = gsi_base;
+            build_smcc_ged_aml(scope, gsi_base, s->memmap[VIRT_ACPI_SMMC].base);
         }
     }
 }
@@ -442,6 +629,7 @@ static void build_dsdt(GArray *table_data,
     AcpiTable table = { .sig = "DSDT", .rev = 2, .oem_id = s->oem_id,
                         .oem_table_id = s->oem_table_id };
 
+    int ged_gsi = GED_IRQ;
 
     acpi_table_begin(&table, table_data);
     dsdt = init_aml_allocator();
@@ -459,7 +647,7 @@ static void build_dsdt(GArray *table_data,
 
     socket_count = riscv_socket_count(ms);
 
-    acpi_dsdt_add_plic_aplic(scope, s);
+    acpi_dsdt_add_plic_aplic_smmc(scope, s);
     acpi_dsdt_add_uart(scope, &memmap[VIRT_UART0], UART0_IRQ);
 
     if (socket_count == 1) {
@@ -487,8 +675,11 @@ static void build_dsdt(GArray *table_data,
         uint32_t event = object_property_get_uint(OBJECT(s->acpi_dev),
                                                   "ged-event", &error_abort);
 
+        if (s->acpi_ged_msimode) {
+            ged_gsi = s->smmc_gsi_base + GED_SMMC_MSI;
+        }
         build_ged_aml(scope, "\\_SB."GED_DEVICE, HOTPLUG_HANDLER(s->acpi_dev),
-                      GED_IRQ, AML_SYSTEM_MEMORY, memmap[VIRT_ACPI_GED].base);
+                      ged_gsi, AML_SYSTEM_MEMORY, memmap[VIRT_ACPI_GED].base);
 
         if (event & ACPI_GED_MEM_HOTPLUG_EVT) {
             build_memory_hotplug_aml(scope, ms->ram_slots, "\\_SB", NULL,

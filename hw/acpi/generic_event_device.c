@@ -366,7 +366,9 @@ static void acpi_ged_send_event(AcpiDeviceIf *adev, AcpiEventStatusBits ev)
 {
     AcpiGedState *s = ACPI_GED(adev);
     GEDState *ged_st = &s->ged_state;
-    uint32_t sel;
+    uint32_t sel, eiid;
+    uint64_t addr;
+    MemTxResult result;
 
     if (ev & ACPI_MEMORY_HOTPLUG_STATUS) {
         sel = ACPI_GED_MEM_HOTPLUG_EVT;
@@ -386,9 +388,23 @@ static void acpi_ged_send_event(AcpiDeviceIf *adev, AcpiEventStatusBits ev)
      * event method.
      */
     ged_st->sel |= sel;
-
-    /* Trigger the event by sending an interrupt to the guest. */
-    qemu_irq_pulse(s->irq);
+    if (s->msi_mode) {
+        if (!ged_st->msi_state.enable)
+            return;
+        addr = (uint64_t)ged_st->msi_state.addr_hi << 32 | ged_st->msi_state.addr_lo;
+        //TODO: Take care of priority in MSI data
+        eiid = ged_st->msi_state.data;
+        address_space_stl_le(&address_space_memory, addr,
+                         eiid, MEMTXATTRS_UNSPECIFIED, &result);
+        if (result != MEMTX_OK) {
+            qemu_log_mask(LOG_GUEST_ERROR, "%s: MSI write failed for "
+                          "0x%" HWADDR_PRIx " eiid=%d\n",
+                          __func__, addr, eiid);
+    }
+    } else {
+        /* Trigger the event by sending an interrupt to the guest. */
+        qemu_irq_pulse(s->irq);
+    }
 }
 
 static Property acpi_ged_properties[] = {

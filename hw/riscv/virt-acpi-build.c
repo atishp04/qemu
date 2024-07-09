@@ -143,12 +143,76 @@ static void acpi_dsdt_add_cpus(Aml *scope, RISCVVirtState *s)
     }
 }
 
-static void acpi_dsdt_add_plic_aplic(Aml *scope, uint8_t socket_count,
+static void build_gtmb_reg(Aml *pkg_aml, AmlAddressSpace as, uint8_t bit_width,
+                           uint8_t bit_offset, uint8_t access_width, uint64_t address)
+{
+    Aml *rs = aml_resource_template();
+    build_append_int_noprefix(rs->buf, 0x82, 1);  /* descriptor */
+    build_append_int_noprefix(rs->buf, 0x12, 1);  /* length[7:0] */
+    build_append_int_noprefix(rs->buf, 0x0, 1);   /* length[15:8] */
+    build_append_gas(rs->buf, as, bit_width, bit_offset, access_width, address);
+    aml_append(pkg_aml, rs);
+}
+
+static void build_gtmb_ged_aml(Aml *table, int gsi_base, hwaddr gtmb_ged_addr)
+{
+    Aml *dev;
+    hwaddr gtmb_ged_addr_1 = gtmb_ged_addr + ACPI_GED_MSI_CTRL_LEN;
+
+    dev = aml_device("GMB%.01X", 0);
+    aml_append(dev, aml_name_decl("_HID", aml_string("ACPI0019")));
+    aml_append(dev, aml_name_decl("_UID", aml_int(0)));
+    aml_append(dev, aml_name_decl("_NGI", aml_int(4))); /* 4 GSIs supported */
+    aml_append(dev, aml_name_decl("_GSB", aml_int(gsi_base)));
+
+    Aml *top_pkg = aml_package(3);
+    aml_append(top_pkg, aml_int(0)); /* Version */
+
+    Aml *gs0_pkg = aml_package(12);
+    aml_append(gs0_pkg, aml_int(gsi_base + GED_GTMB_MSI + 1));
+    build_gtmb_reg(gs0_pkg, AML_AS_SYSTEM_MEMORY, 0x20, 0, 3, gtmb_ged_addr_1 + ACPI_GED_MSI_CTRL_ADDR_LOW); /* MSI ADDR LOW */
+    build_gtmb_reg(gs0_pkg, AML_AS_SYSTEM_MEMORY, 0x20, 0, 3, gtmb_ged_addr_1 + ACPI_GED_MSI_CTRL_ADDR_HIGH);
+    build_gtmb_reg(gs0_pkg, AML_AS_SYSTEM_MEMORY, 0x20, 0, 3, gtmb_ged_addr_1 + ACPI_GED_MSI_CTRL_DATA);
+    build_gtmb_reg(gs0_pkg, AML_AS_SYSTEM_MEMORY, 0x20, 0, 3, gtmb_ged_addr_1 + ACPI_GED_MSI_CTRL_ENABLE);
+    /* Unsupported elements */
+    build_gtmb_reg(gs0_pkg, AML_AS_SYSTEM_MEMORY, 0, 0, 0, 0); /* MSIRetriggerValue */
+    build_gtmb_reg(gs0_pkg, AML_AS_SYSTEM_MEMORY, 0, 0, 0, 0); /* MSIRetrigger */
+    build_gtmb_reg(gs0_pkg, AML_AS_SYSTEM_MEMORY, 0, 0, 0, 0); /* MSITriggerTypeEdgeRising */
+    build_gtmb_reg(gs0_pkg, AML_AS_SYSTEM_MEMORY, 0, 0, 0, 0); /* MSITriggerTypeEdgeFalling */
+    build_gtmb_reg(gs0_pkg, AML_AS_SYSTEM_MEMORY, 0, 0, 0, 0); /* MSITriggerTypeLevelHigh */
+    build_gtmb_reg(gs0_pkg, AML_AS_SYSTEM_MEMORY, 0, 0, 0, 0); /* MSITriggerTypeLevelLow */
+    build_gtmb_reg(gs0_pkg, AML_AS_SYSTEM_MEMORY, 0, 0, 0, 0); /* MsiTriggerType */
+    aml_append(top_pkg, gs0_pkg);
+
+    Aml *gs1_pkg = aml_package(12);
+    aml_append(gs1_pkg, aml_int(gsi_base + GED_GTMB_MSI));
+    build_gtmb_reg(gs1_pkg, AML_AS_SYSTEM_MEMORY, 0x20, 0, 3, gtmb_ged_addr + ACPI_GED_MSI_CTRL_ADDR_LOW); /* MSI ADDR LOW */
+    build_gtmb_reg(gs1_pkg, AML_AS_SYSTEM_MEMORY, 0x20, 0, 3, gtmb_ged_addr + ACPI_GED_MSI_CTRL_ADDR_HIGH);
+    build_gtmb_reg(gs1_pkg, AML_AS_SYSTEM_MEMORY, 0x20, 0, 3, gtmb_ged_addr + ACPI_GED_MSI_CTRL_DATA);
+    build_gtmb_reg(gs1_pkg, AML_AS_SYSTEM_MEMORY, 0x20, 0, 3, gtmb_ged_addr + ACPI_GED_MSI_CTRL_ENABLE);
+
+    /* Unsupported elements */
+    build_gtmb_reg(gs1_pkg, AML_AS_SYSTEM_MEMORY, 0, 0, 0, 0); /* MSIRetriggerValue */
+    build_gtmb_reg(gs1_pkg, AML_AS_SYSTEM_MEMORY, 0, 0, 0, 0); /* MSIRetrigger */
+    build_gtmb_reg(gs1_pkg, AML_AS_SYSTEM_MEMORY, 0, 0, 0, 0); /* MSITriggerTypeEdgeRising */
+    build_gtmb_reg(gs1_pkg, AML_AS_SYSTEM_MEMORY, 0, 0, 0, 0); /* MSITriggerTypeEdgeFalling */
+    build_gtmb_reg(gs1_pkg, AML_AS_SYSTEM_MEMORY, 0, 0, 0, 0); /* MSITriggerTypeLevelHigh */
+    build_gtmb_reg(gs1_pkg, AML_AS_SYSTEM_MEMORY, 0, 0, 0, 0); /* MSITriggerTypeLevelLow */
+    build_gtmb_reg(gs1_pkg, AML_AS_SYSTEM_MEMORY, 0, 0, 0, 0); /* MsiTriggerType */
+    aml_append(top_pkg, gs1_pkg);
+
+    aml_append(dev, aml_name_decl("_GMA",top_pkg));
+
+    aml_append(table, dev);
+
+}
+
+static uint32_t acpi_dsdt_add_plic_aplic(Aml *scope, uint8_t socket_count,
                                      uint64_t mmio_base, uint64_t mmio_size,
                                      const char *hid)
 {
     uint64_t plic_aplic_addr;
-    uint32_t gsi_base;
+    uint32_t gsi_base = 0;
     uint8_t  socket;
 
     for (socket = 0; socket < socket_count; socket++) {
@@ -165,6 +229,8 @@ static void acpi_dsdt_add_plic_aplic(Aml *scope, uint8_t socket_count,
         aml_append(dev, aml_name_decl("_CRS", crs));
         aml_append(scope, dev);
     }
+
+    return gsi_base;
 }
 
 static void
@@ -420,6 +486,8 @@ static void build_dsdt(GArray *table_data,
     AcpiTable table = { .sig = "DSDT", .rev = 2, .oem_id = s->oem_id,
                         .oem_table_id = s->oem_table_id };
 
+    int ged_gsi = GED_IRQ;
+    uint32_t gsi_base;
 
     acpi_table_begin(&table, table_data);
     dsdt = init_aml_allocator();
@@ -441,9 +509,15 @@ static void build_dsdt(GArray *table_data,
         acpi_dsdt_add_plic_aplic(scope, socket_count, memmap[VIRT_PLIC].base,
                                  memmap[VIRT_PLIC].size, "RSCV0001");
     } else {
-        acpi_dsdt_add_plic_aplic(scope, socket_count, memmap[VIRT_APLIC_S].base,
+        gsi_base = acpi_dsdt_add_plic_aplic(scope, socket_count, memmap[VIRT_APLIC_S].base,
                                  memmap[VIRT_APLIC_S].size, "RSCV0002");
-    }
+        /* GTMB DSDT node */
+        if (s->acpi_ged_msimode) {
+            gsi_base = gsi_base + VIRT_IRQCHIP_NUM_SOURCES + 1;
+            s->gtmb_gsi_base = gsi_base;
+            build_gtmb_ged_aml(scope, gsi_base, s->memmap[VIRT_ACPI_GTMB].base);
+        }
+   }
 
     acpi_dsdt_add_uart(scope, &memmap[VIRT_UART0], UART0_IRQ);
 
@@ -470,8 +544,11 @@ static void build_dsdt(GArray *table_data,
         uint32_t event = object_property_get_uint(OBJECT(s->acpi_dev),
                                                   "ged-event", &error_abort);
 
+        if (s->acpi_ged_msimode) {
+            ged_gsi = s->gtmb_gsi_base + GED_GTMB_MSI;
+        }
         build_ged_aml(scope, "\\_SB."GED_DEVICE, HOTPLUG_HANDLER(s->acpi_dev),
-                      GED_IRQ, AML_SYSTEM_MEMORY, memmap[VIRT_ACPI_GED].base);
+                      ged_gsi, AML_SYSTEM_MEMORY, memmap[VIRT_ACPI_GED].base);
 
         if (event & ACPI_GED_MEM_HOTPLUG_EVT) {
             build_memory_hotplug_aml(scope, ms->ram_slots, "\\_SB", NULL,

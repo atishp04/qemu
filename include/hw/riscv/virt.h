@@ -64,6 +64,7 @@ struct RISCVVirtState {
     struct GPEXHost *gpex_host;
     DeviceState *acpi_dev;
     bool acpi_ged_msimode;
+    int gtmb_gsi_base;
     Notifier powerdown_notifier;
 };
 
@@ -101,6 +102,11 @@ enum {
     VIRTIO_COUNT = 8,
     PCIE_IRQ = 0x20, /* 32 to 35 */
     VIRT_PLATFORM_BUS_IRQ = 64, /* 64 to 95 */
+};
+
+enum {
+   GED_GTMB_MSI = 0,
+   TEST_GTMB_MSI = 1,
 };
 
 #define VIRT_PLATFORM_BUS_NUM_IRQS 32

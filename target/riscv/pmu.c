@@ -282,7 +282,7 @@ int riscv_pmu_incr_ctr(RISCVCPU *cpu, enum riscv_pmu_event_idx event_idx)
     if (!cpu->cfg.pmu_mask) {
         return 0;
     }
-    value = g_hash_table_lookup(cpu->pmu_event_ctr_map,
+    value = g_hash_table_lookup(cpu->pmu_event_ctr_map_active,
                                 GUINT_TO_POINTER(event_idx));
     if (!value) {
         return -1;
@@ -315,12 +315,12 @@ bool riscv_pmu_ctr_monitor_instructions(CPURISCVState *env,
     }
 
     cpu = env_archcpu(env);
-    if (!cpu->pmu_event_ctr_map) {
+    if (!cpu->pmu_event_ctr_map_active) {
         return false;
     }
 
     event_idx = RISCV_PMU_EVENT_HW_INSTRUCTIONS;
-    ctr_idx = GPOINTER_TO_UINT(g_hash_table_lookup(cpu->pmu_event_ctr_map,
+    ctr_idx = GPOINTER_TO_UINT(g_hash_table_lookup(cpu->pmu_event_ctr_map_active,
                                GUINT_TO_POINTER(event_idx)));
     if (!ctr_idx) {
         return false;
@@ -341,12 +341,12 @@ bool riscv_pmu_ctr_monitor_cycles(CPURISCVState *env, uint32_t target_ctr)
     }
 
     cpu = env_archcpu(env);
-    if (!cpu->pmu_event_ctr_map) {
+    if (!cpu->pmu_event_ctr_map_active) {
         return false;
     }
 
     event_idx = RISCV_PMU_EVENT_HW_CPU_CYCLES;
-    ctr_idx = GPOINTER_TO_UINT(g_hash_table_lookup(cpu->pmu_event_ctr_map,
+    ctr_idx = GPOINTER_TO_UINT(g_hash_table_lookup(cpu->pmu_event_ctr_map_active,
                                GUINT_TO_POINTER(event_idx)));
 
     /* Counter zero is not used for event_ctr_map */
@@ -382,7 +382,7 @@ int riscv_pmu_update_event_map(CPURISCVState *env, uint64_t value,
     uint32_t event_idx;
     RISCVCPU *cpu = env_archcpu(env);
 
-    if (!riscv_pmu_counter_valid(cpu, ctr_idx) || !cpu->pmu_event_ctr_map) {
+    if (!riscv_pmu_counter_valid(cpu, ctr_idx) || !cpu->pmu_event_ctr_map_active) {
         return -1;
     }
 
@@ -391,14 +391,14 @@ int riscv_pmu_update_event_map(CPURISCVState *env, uint64_t value,
      * mapping.
      */
     if (!value) {
-        g_hash_table_foreach_remove(cpu->pmu_event_ctr_map,
+        g_hash_table_foreach_remove(cpu->pmu_event_ctr_map_active,
                                     pmu_remove_event_map,
                                     GUINT_TO_POINTER(ctr_idx));
         return 0;
     }
 
     event_idx = value & MHPMEVENT_IDX_MASK;
-    if (g_hash_table_lookup(cpu->pmu_event_ctr_map,
+    if (g_hash_table_lookup(cpu->pmu_event_ctr_map_active,
                             GUINT_TO_POINTER(event_idx))) {
         return 0;
     }
@@ -414,7 +414,7 @@ int riscv_pmu_update_event_map(CPURISCVState *env, uint64_t value,
         /* We don't support any raw events right now */
         return -1;
     }
-    g_hash_table_insert(cpu->pmu_event_ctr_map, GUINT_TO_POINTER(event_idx),
+    g_hash_table_insert(cpu->pmu_event_ctr_map_active, GUINT_TO_POINTER(event_idx),
                         GUINT_TO_POINTER(ctr_idx));
 
     return 0;
@@ -472,7 +472,7 @@ static void pmu_timer_trigger_irq(RISCVCPU *cpu,
         return;
     }
 
-    ctr_idx = GPOINTER_TO_UINT(g_hash_table_lookup(cpu->pmu_event_ctr_map,
+    ctr_idx = GPOINTER_TO_UINT(g_hash_table_lookup(cpu->pmu_event_ctr_map_active,
                                GUINT_TO_POINTER(evt_idx)));
     if (!riscv_pmu_counter_enabled(cpu, ctr_idx)) {
         return;
@@ -582,6 +582,7 @@ int riscv_pmu_setup_timer(CPURISCVState *env, uint64_t value, uint32_t ctr_idx)
 
 void riscv_pmu_init(RISCVCPU *cpu, Error **errp)
 {
+    fprintf(stdout, "%s: In cpu->cfg.pmu_mask %x\n", __func__, cpu->cfg.pmu_mask);
     if (cpu->cfg.pmu_mask & (COUNTEREN_CY | COUNTEREN_TM | COUNTEREN_IR)) {
         error_setg(errp, "\"pmu-mask\" contains invalid bits (0-2) set");
         return;
@@ -592,8 +593,8 @@ void riscv_pmu_init(RISCVCPU *cpu, Error **errp)
         return;
     }
 
-    cpu->pmu_event_ctr_map = g_hash_table_new(g_direct_hash, g_direct_equal);
-    if (!cpu->pmu_event_ctr_map) {
+    cpu->pmu_event_ctr_map_active = g_hash_table_new(g_direct_hash, g_direct_equal);
+    if (!cpu->pmu_event_ctr_map_active) {
         error_setg(errp, "Unable to allocate PMU event hash table");
         return;
     }

@@ -19,6 +19,7 @@
 #include "qemu/osdep.h"
 #include "qemu/log.h"
 #include "qemu/error-report.h"
+#include "qemu/thread.h"
 #include "qemu/timer.h"
 #include "cpu.h"
 #include "pmu.h"
@@ -271,11 +272,15 @@ static bool riscv_pmu_htable_lookup(RISCVCPU *cpu, uint32_t key, uint32_t *value
     if (!table)
         return false;
 
+    qemu_mutex_lock(&cpu->pmu_mutex);
     gpointer val_ptr = g_hash_table_lookup(table, GUINT_TO_POINTER(key));
-    if (!val_ptr)
+    if (!val_ptr) {
+        qemu_mutex_unlock(&cpu->pmu_mutex);
         return false;
+    }
 
     *value = GPOINTER_TO_UINT(val_ptr);
+    qemu_mutex_unlock(&cpu->pmu_mutex);
     return true;
 }
 
@@ -387,9 +392,11 @@ int riscv_pmu_update_event_map(CPURISCVState *env, uint64_t value,
      * mapping.
      */
     if (!value) {
+        qemu_mutex_lock(&cpu->pmu_mutex);
         g_hash_table_foreach_remove(cpu->pmu_event_ctr_map_active,
                                     pmu_remove_event_map,
                                     GUINT_TO_POINTER(ctr_idx));
+        qemu_mutex_unlock(&cpu->pmu_mutex);
         return 0;
     }
 
@@ -409,8 +416,10 @@ int riscv_pmu_update_event_map(CPURISCVState *env, uint64_t value,
         /* We don't support any raw events right now */
         return -1;
     }
+    qemu_mutex_lock(&cpu->pmu_mutex);
     g_hash_table_insert(cpu->pmu_event_ctr_map_active, GUINT_TO_POINTER(event_idx),
                         GUINT_TO_POINTER(ctr_idx));
+    qemu_mutex_unlock(&cpu->pmu_mutex);
 
     return 0;
 }
@@ -597,4 +606,5 @@ void riscv_pmu_init(RISCVCPU *cpu, Error **errp)
     }
 
     cpu->pmu_avail_ctrs = cpu->cfg.pmu_mask;
+    qemu_mutex_init(&cpu->pmu_mutex);
 }

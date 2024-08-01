@@ -496,6 +496,7 @@ struct ArchCPU {
     uint32_t pmu_avail_ctrs;
     /* Active mapping of events to counters */
     GHashTable *pmu_event_ctr_map_active;
+    QemuMutex pmu_mutex;
     const GPtrArray *decoders;
 };
 

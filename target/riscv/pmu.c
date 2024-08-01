@@ -266,14 +266,14 @@ static void riscv_pmu_cycle_update_priv(CPURISCVState *env,
     counter_arr[env->priv] += delta;
 }
 
-static bool riscv_pmu_htable_lookup(RISCVCPU *cpu, uint32_t key, uint32_t *value)
+static bool riscv_pmu_htable_lookup(RISCVCPU *cpu, uint64_t key, uint32_t *value)
 {
     GHashTable *table = cpu->pmu_event_ctr_map_active;
     if (!table)
         return false;
 
     qemu_mutex_lock(&cpu->pmu_mutex);
-    gpointer val_ptr = g_hash_table_lookup(table, GUINT_TO_POINTER(key));
+    gpointer val_ptr = g_hash_table_lookup(table, &key);
     if (!val_ptr) {
         qemu_mutex_unlock(&cpu->pmu_mutex);
         return false;
@@ -379,9 +379,10 @@ static int64_t pmu_icount_ticks_to_ns(int64_t value)
 int riscv_pmu_update_event_map(CPURISCVState *env, uint64_t value,
                                uint32_t ctr_idx)
 {
-    uint32_t event_idx;
+    uint64_t event_idx;
     RISCVCPU *cpu = env_archcpu(env);
     uint32_t mapped_ctr_idx;
+    gint64 *eid_ptr;
 
     if (!riscv_pmu_counter_valid(cpu, ctr_idx) || !cpu->pmu_event_ctr_map_active) {
         return -1;
@@ -416,8 +417,10 @@ int riscv_pmu_update_event_map(CPURISCVState *env, uint64_t value,
         /* We don't support any raw events right now */
         return -1;
     }
+    eid_ptr = g_new(gint64, 1);
+    *eid_ptr = event_idx;
     qemu_mutex_lock(&cpu->pmu_mutex);
-    g_hash_table_insert(cpu->pmu_event_ctr_map_active, GUINT_TO_POINTER(event_idx),
+    g_hash_table_insert(cpu->pmu_event_ctr_map_active, eid_ptr,
                         GUINT_TO_POINTER(ctr_idx));
     qemu_mutex_unlock(&cpu->pmu_mutex);
 
@@ -599,7 +602,7 @@ void riscv_pmu_init(RISCVCPU *cpu, Error **errp)
         return;
     }
 
-    cpu->pmu_event_ctr_map_active = g_hash_table_new(g_direct_hash, g_direct_equal);
+    cpu->pmu_event_ctr_map_active = g_hash_table_new_full(g_int64_hash, g_int64_equal, g_free, NULL);
     if (!cpu->pmu_event_ctr_map_active) {
         error_setg(errp, "Unable to allocate PMU event hash table");
         return;
